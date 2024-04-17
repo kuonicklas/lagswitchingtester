@@ -10,6 +10,8 @@
 #define PLAYER_SPEED 5
 #define PLAYER_SIZE 64 //Width of square. Origin at top left (0,0).
 #define MAX_PLAYERS 4
+#define THRESHOLD 60 //Number of samples taken for analysis
+#define CRITICAL_ZONE_RADIUS 100
 
 enum class serverPacket{INITIALIZE, UPDATE, DISCONNECT};
 enum class clientPacket{UPDATE};

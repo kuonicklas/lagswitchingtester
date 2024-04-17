@@ -6,6 +6,7 @@
 #include "shared.h"
 #include <vector>
 #include <array>
+#include <cmath>
 
 //----STRUCTS----
 typedef struct{
@@ -29,10 +30,17 @@ void processPacket(ENetPacket*);
 void parseInitPacket(std::string&);
 void parseUpdatePacket(std::string&);
 void updateServer();
+void DrawCircle(SDL_Renderer*, int32_t, int32_t, int32_t); //NOT MY CODE; THIS IS A WINDOWS "IMPORT"
+
+unsigned int sendSample(unsigned int, void*);
 
 //----Global Vars----
 ENetPeer* peer; //The server-client connection
 bool initialized = false;
+bool dropPackets = false;
+bool drawCircle = false;
+
+int critical_counter; //Accumulator for critical events
 
 //
 int main(int argc, char* argv[]){
@@ -82,6 +90,8 @@ int main(int argc, char* argv[]){
     std::cout << "Awaiting player initialization from server..." << std::endl;
     Player self = {};
     playerList.push_back(self);
+
+    SDL_TimerID sampleTimer = SDL_AddTimer(1000, sendSample, NULL); //Send critical moment sample
     
     while(true){
         //Receive packet(s)
@@ -99,7 +109,8 @@ int main(int argc, char* argv[]){
 
         getInput(); //User Input
         doGameLogic(); //Player Movement
-        updateServer();
+        if (!dropPackets)
+            updateServer();
         doDrawing(); //Drawing
         SDL_RenderPresent(app.renderer); //Render
         
@@ -109,9 +120,14 @@ int main(int argc, char* argv[]){
 }
 
 void init_SDL(){
-    //Initialize SDL's renderer
+    //Initialize SDL compoments
     if (SDL_Init(SDL_INIT_VIDEO) != 0){
-        std::cout << "Failed to initialize SDL: " << SDL_GetError() << std::endl;
+        std::cout << "Failed to initialize SDL Video: " << SDL_GetError() << std::endl;
+        exit(1);
+    }
+
+    if (SDL_Init(SDL_INIT_TIMER) != 0){
+        std::cout << "Failed to initialize SDL Timer: " << SDL_GetError() << std::endl;
         exit(1);
     }
 
@@ -171,6 +187,29 @@ void doGameLogic(){
         playerList[0].x -= PLAYER_SPEED;
     if (app.input[SDL_SCANCODE_D])
         playerList[0].x += PLAYER_SPEED;
+    if (app.input[SDL_SCANCODE_SPACE]){
+        //Toggle dropPackets
+        if (!dropPackets){
+            std::cout << "[PACKET SWITCHING ON]" << std::endl;
+            dropPackets = true;
+        }
+    }
+    else{
+        if (dropPackets){
+            std::cout << "[PACKET SWITCHING OFF]" << std::endl;
+            dropPackets = false;
+        }
+    }
+    if (app.input[SDL_SCANCODE_P]){
+        //Toggle drawCircle
+        if (!drawCircle){
+            drawCircle = true;
+        }
+    }
+    else{
+        if (drawCircle)
+            drawCircle = false;
+    }
 
     //Constrain within window
     playerList[0].x = std::max(0, playerList[0].x);
@@ -180,6 +219,21 @@ void doGameLogic(){
     
     //if (prev_x != player.x || prev_y != player.y)
         //std::cout << "Player position: (" << player.x << "," << player.y << ")" << std::endl;
+
+    //Check critical events
+    double distance;
+    for (Player& p : playerList){
+        if (p.id == playerList[0].id)
+            continue;
+
+        double dx = playerList[0].x + (PLAYER_SIZE / 2) - p.x + (PLAYER_SIZE / 2);
+        double dy = playerList[0].y + (PLAYER_SIZE / 2) - p.y + (PLAYER_SIZE / 2);
+        distance = std::hypot(dx, dy);
+        if (distance < CRITICAL_ZONE_RADIUS){
+            critical_counter++;
+            break; //We only need at least one other player within critical distance
+        }
+    }
 }
 
 void doDrawing(){
@@ -189,6 +243,12 @@ void doDrawing(){
 
     if (!initialized)
         return;
+
+    //Draw critical zone
+    if (drawCircle){
+        SDL_SetRenderDrawColor(app.renderer, 0, 0, 0, 255);
+        DrawCircle(app.renderer, playerList[0].x + (PLAYER_SIZE / 2), playerList[0].y + (PLAYER_SIZE / 2), CRITICAL_ZONE_RADIUS);
+    }
     
     //Draw all players
     for (auto& p : playerList){
@@ -218,7 +278,8 @@ void processPacket(ENetPacket* packet){
             break;
         case 1:
             //UPDATE
-            parseUpdatePacket(data);
+            if (!dropPackets)
+                parseUpdatePacket(data);
             break;
     }
 }
@@ -237,6 +298,7 @@ void parseInitPacket(std::string& data){
     playerList[0].color.b = stoi(values[5]);
 
     initialized = true;
+    std::cout << "Initialized with ID[" << playerList[0].id << "] Pos[" << playerList[0].x << "," << playerList[0].y << "] Color[" << static_cast<int>(playerList[0].color.r) << "," << static_cast<int>(playerList[0].color.g) << "," << static_cast<int>(playerList[0].color.b) << "]" << std::endl; 
 }
 
 void updateServer(){
@@ -310,4 +372,48 @@ void parseUpdatePacket(std::string& data){
 
     // //Print player list
     // std::cout << "PlayerCount: " << playerList.size() << std::endl;
+}
+
+unsigned int sendSample(unsigned int a, void* b){
+    std::cout << "Counter: " << critical_counter << std::endl;
+    critical_counter = 0;
+    return 1000;
+}
+
+void DrawCircle(SDL_Renderer * renderer, int32_t centreX, int32_t centreY, int32_t radius)
+{
+   const int32_t diameter = (radius * 2);
+
+   int32_t x = (radius - 1);
+   int32_t y = 0;
+   int32_t tx = 1;
+   int32_t ty = 1;
+   int32_t error = (tx - diameter);
+
+   while (x >= y)
+   {
+      //  Each of the following renders an octant of the circle
+      SDL_RenderDrawPoint(renderer, centreX + x, centreY - y);
+      SDL_RenderDrawPoint(renderer, centreX + x, centreY + y);
+      SDL_RenderDrawPoint(renderer, centreX - x, centreY - y);
+      SDL_RenderDrawPoint(renderer, centreX - x, centreY + y);
+      SDL_RenderDrawPoint(renderer, centreX + y, centreY - x);
+      SDL_RenderDrawPoint(renderer, centreX + y, centreY + x);
+      SDL_RenderDrawPoint(renderer, centreX - y, centreY - x);
+      SDL_RenderDrawPoint(renderer, centreX - y, centreY + x);
+
+      if (error <= 0)
+      {
+         ++y;
+         error += ty;
+         ty += 2;
+      }
+
+      if (error > 0)
+      {
+         --x;
+         tx += 2;
+         error += (tx - diameter);
+      }
+   }
 }

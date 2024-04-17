@@ -5,6 +5,7 @@
 #include "shared.h"
 #include <vector>
 #include <SDL2/SDL.h>
+#include <map>
 
 void cleanup();
 void printPlayerCount();
@@ -13,6 +14,13 @@ int random_range(int, int);
 void processPacket(ENetPacket*);
 void parseUpdatePacket(std::string&);
 unsigned int sendUpdatePackets(unsigned int, void*);
+unsigned int analyzePackets(unsigned int, void*);
+
+//Packet switching detection
+std::map<int, int> packet_counter; //Accumulator for each player
+std::map<int,std::vector<int>> packetCount; //Vector of samples for each player
+std::map<int,std::vector<int>> criticalEvents; //Vector of samples for each player
+int getPValue();
 
 ENetHost* server;
 ENetEvent event;
@@ -49,6 +57,7 @@ int main(int argc, char* argv[]){
     //Game loop start
     std::srand(time(nullptr)); //Seed the RNG
     SDL_TimerID updateTimer = SDL_AddTimer(16, sendUpdatePackets, NULL); //Call update automatically
+    SDL_TimerID analysisTimer = SDL_AddTimer(1000, analyzePackets, NULL); //Sample rate (also analysis)
 
     while(true){
         //Receive packet(s)
@@ -148,6 +157,8 @@ void parseUpdatePacket(std::string& data){
         
         p.x = stoi(values[1]);
         p.y = stoi(values[2]);
+
+        packet_counter[p.id]++; //Increment packet count
         //std::cout << "Player " << id << ": [" << p.x << "," << p.y << "]" << std::endl;
     }
 }
@@ -177,5 +188,28 @@ unsigned int sendUpdatePackets(unsigned int a, void* b){
         enet_peer_send(&(server->peers[i]), 0, packet);
     }
 
-    return 1;
+    return 16;
+}
+
+unsigned int analyzePackets(unsigned int a, void* b){
+    static int threshold_counter = 0;
+    threshold_counter++;
+
+    //Get Sample
+    for (Player& p : playerList){
+        packetCount[p.id].push_back(packet_counter[p.id]);
+        std::cout << "Sample for Player [" << p.id << "]: " << packet_counter[p.id] << std::endl;
+        packet_counter[p.id] = 0;
+    }
+
+    if (threshold_counter == THRESHOLD){
+        //Perform analysis
+
+        //Clear data
+        for (Player& p : playerList){
+            packetCount[p.id].clear();
+        }
+    }
+
+    return 1000;
 }

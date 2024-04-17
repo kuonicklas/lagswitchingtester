@@ -39,6 +39,7 @@ ENetPeer* peer; //The server-client connection
 bool initialized = false;
 bool dropPackets = false;
 bool drawCircle = false;
+bool badConnection = false;
 
 int critical_counter; //Accumulator for critical events
 
@@ -109,8 +110,15 @@ int main(int argc, char* argv[]){
 
         getInput(); //User Input
         doGameLogic(); //Player Movement
-        if (!dropPackets)
-            updateServer();
+        
+        if (!dropPackets){
+            int chance = 0;
+            if (badConnection)
+                chance = random_range(0,3);
+            if (chance == 0)
+                updateServer();
+        }
+            
         doDrawing(); //Drawing
         SDL_RenderPresent(app.renderer); //Render
         
@@ -187,8 +195,9 @@ void doGameLogic(){
         playerList[0].x -= PLAYER_SPEED;
     if (app.input[SDL_SCANCODE_D])
         playerList[0].x += PLAYER_SPEED;
+
+    //Toggle dropPackets
     if (app.input[SDL_SCANCODE_SPACE]){
-        //Toggle dropPackets
         if (!dropPackets){
             std::cout << "[PACKET SWITCHING ON]" << std::endl;
             dropPackets = true;
@@ -200,8 +209,9 @@ void doGameLogic(){
             dropPackets = false;
         }
     }
+
+    //Toggle drawCircle
     if (app.input[SDL_SCANCODE_P]){
-        //Toggle drawCircle
         if (!drawCircle){
             drawCircle = true;
         }
@@ -209,6 +219,17 @@ void doGameLogic(){
     else{
         if (drawCircle)
             drawCircle = false;
+    }
+    
+    //Toggle badConnection
+    if (app.input[SDL_SCANCODE_L]){
+        if (!badConnection){
+            badConnection = true;
+        }
+    }
+    else{
+        if (badConnection)
+            badConnection = false;
     }
 
     //Constrain within window

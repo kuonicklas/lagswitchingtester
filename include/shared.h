@@ -39,4 +39,8 @@ void grabStrings(std::string& str, std::string data[]){
     }
 }
 
+int random_range(int min, int max){
+    return min + (std::rand() % (max - min + 1));
+}
+
 #endif

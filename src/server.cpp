@@ -10,7 +10,6 @@
 void cleanup();
 void printPlayerCount();
 void initializePlayer();
-int random_range(int, int);
 void processPacket(ENetPacket*);
 void parseUpdatePacket(std::string&);
 unsigned int sendUpdatePackets(unsigned int, void*);
@@ -127,10 +126,6 @@ void initializePlayer(){
     std::cout << "Initialized player [" << id << "]" << std::endl;
 
     ++id;
-}
-
-int random_range(int min, int max){
-    return min + (std::rand() % (max - min + 1));
 }
 
 void processPacket(ENetPacket* packet){

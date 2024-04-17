@@ -23,11 +23,8 @@ int main(int argc, char* argv[]){
         std::cout << "Failed to create an ENet server." << std::endl;
         exit(1);
     }
-
-    char myip[32];
     
-    enet_address_get_host_ip(&address, myip, strlen(myip));
-    std::cout << "Server created at " << std::to_string(myip) << ":" << address.port << ". Ready to connect." << std::endl;
+    std::cout << "Server created at port " << address.port << ". Ready to connect." << std::endl;
 
     //Game loop start
     ENetEvent event;

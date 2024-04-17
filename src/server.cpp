@@ -2,6 +2,9 @@
 #include <enet/enet.h>
 
 void cleanup();
+void printPlayerCount();
+
+ENetHost* server;
 
 int main(int argc, char* argv[]){
     //Initialize
@@ -16,7 +19,6 @@ int main(int argc, char* argv[]){
     address.host = ENET_HOST_ANY;
     address.port = 4450;
 
-    ENetHost* server;
     server = enet_host_create(&address, 32, 1, 0, 0);
 
     if (server == NULL){
@@ -25,6 +27,7 @@ int main(int argc, char* argv[]){
     }
     
     std::cout << "Server created at port " << address.port << ". Ready to connect." << std::endl;
+    printPlayerCount();
 
     //Game loop start
     ENetEvent event;
@@ -34,12 +37,14 @@ int main(int argc, char* argv[]){
             switch(event.type){
                 case ENET_EVENT_TYPE_CONNECT:
                     std::cout << "A client connected from " << event.peer->address.host << ":" << event.peer->address.port << "." << std::endl;
-                    break;
-                case ENET_EVENT_TYPE_RECEIVE:
-                    std::cout << "A packet of length " << event.packet->dataLength << " containing " << event.packet->data << " was received from " << event.peer->address.host << ":" << event.peer->address.port << " on channel" << event.channelID << "." << std::endl;
+                    printPlayerCount();
                     break;
                 case ENET_EVENT_TYPE_DISCONNECT:
                     std::cout << event.peer->address.host << ":" << event.peer->address.port << " disconnected." << std::endl;
+                    printPlayerCount();
+                    break;
+                case ENET_EVENT_TYPE_RECEIVE:
+                    std::cout << "A packet of length " << event.packet->dataLength << " containing " << event.packet->data << " was received from " << event.peer->address.host << ":" << event.peer->address.port << " on channel" << event.channelID << "." << std::endl;
                     break;
             }
         }   
@@ -53,4 +58,8 @@ int main(int argc, char* argv[]){
 
 void cleanup(){
     enet_deinitialize();
+}
+
+void printPlayerCount(){
+    std::cout << "There are [" << server->connectedPeers << "] players connected." << std::endl;
 }

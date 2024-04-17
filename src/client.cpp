@@ -3,14 +3,7 @@
 #include <string.h>
 #include <iostream>
 #include <enet/enet.h>
-#include <cstdint>
-
-//----DEFS----
-#define WINDOW_WIDTH 600
-#define WINDOW_HEIGHT 600
-#define MAX_KEYBOARD_KEYS 350 //350 possible keyboard inputs
-#define PLAYER_SPEED 5
-#define PLAYER_SIZE 64 //Width of square. Origin at top left (0,0).
+#include "shared.h"
 
 //----STRUCTS----
 typedef struct{
@@ -19,17 +12,10 @@ typedef struct{
     int input[MAX_KEYBOARD_KEYS]; //Stores the state of all keyboard inputs
 } App;
 
-typedef struct{
-    int x;
-    int y;
-    std::uint8_t id; //Player id
-} Player;
-
 App app; //Game window
 Player* player;
 
 //----FUNCTIONS----
-
 void init_SDL();
 void cleanup();
 void getInput();
@@ -37,9 +23,15 @@ void registerPress(SDL_KeyboardEvent*);
 void registerRelease(SDL_KeyboardEvent*);
 void doGameLogic();
 void doDrawing();
+void processPacket(ENetPacket*);
+void parseInitPacket(std::string&);
+void grabStrings(std::string&, std::string[]);
+
+//----Global Vars----
+ENetPeer* peer; //The server-client connection
+bool initialized = false;
 
 //
-
 int main(int argc, char* argv[]){
     //Initialize
     init_SDL();
@@ -55,7 +47,6 @@ int main(int argc, char* argv[]){
     ENetHost* client;
     ENetAddress address; //Holds server IP and port
     ENetEvent event; //Holds events from server (i.e. data)
-    ENetPeer* peer; //The server-client connection
     
     client = enet_host_create(NULL, 1, 1, 0, 0);
     if (client == NULL){
@@ -66,6 +57,8 @@ int main(int argc, char* argv[]){
     enet_address_set_host(&address, "127.0.0.1");
     address.port = 4450;
 
+    std::cout << "Connecting to server..." << std::endl;
+
     peer = enet_host_connect(client, &address, 1, 0);
     if (peer == NULL){
         std::cout << "Failed to connect with the server." << std::endl;
@@ -73,7 +66,7 @@ int main(int argc, char* argv[]){
 
     if (enet_host_service(client, &event, 5000) > 0
         && event.type == ENET_EVENT_TYPE_CONNECT){
-            std::cout << "Connection succeeded." << std::endl;
+            std::cout << "Connected to " << event.peer->address.host << ":" << event.peer->address.port << "." << std::endl;
         }
     else{
         enet_peer_reset(peer);
@@ -82,21 +75,19 @@ int main(int argc, char* argv[]){
         exit(0);
     }
 
-    //Game loop start
+    //GAME LOOP
     player = new Player;
-    player->x=0;//TEMP
-    player->y=0;//TEMP
     
     while(true){
         //Receive packet
         while(enet_host_service(client, &event, 0) > 0){ //Was 1000
             switch(event.type){
                 case ENET_EVENT_TYPE_RECEIVE:
-                    std::cout << "A packet of length " << event.packet->dataLength << " containing " << event.packet->data << " was received from " << event.peer->address.host << ":" << event.peer->address.port << " on channel" << event.channelID << "." << std::endl;
+                    std::cout << "Received packet: [" << event.packet->data << "]" << std::endl;
+                    processPacket(event.packet);
                     break;
                 case ENET_EVENT_TYPE_DISCONNECT:
                     std::cout << "Server at " << event.peer->address.host << ":" << event.peer->address.port << " closed." << std::endl;
-                    enet_peer_disconnect(peer, 0); //DO I NEED THIS LINE?
                     break;
             }
         }
@@ -108,18 +99,6 @@ int main(int argc, char* argv[]){
         //Cap Frame Rate
         SDL_Delay(16);
     }
-    
-    //UNNECESSARY PROBS
-    // while(enet_host_service(client, &event, 3000) > 0){
-    //     switch(event.type){
-    //         case ENET_EVENT_TYPE_RECEIVE:
-    //             enet_packet_destroy(event.packet);
-    //             break;
-    //         case ENET_EVENT_TYPE_DISCONNECT:
-    //             std::cout << "Disconnection succeeded." << std::endl;
-    //             break;
-    //     }
-    // }
 }
 
 void init_SDL(){
@@ -175,15 +154,15 @@ void registerRelease(SDL_KeyboardEvent* event){
 
 void doGameLogic(){
     //Movement
-    int prev_x(player->x), prev_y(player->y);
+    //int prev_x(player->x), prev_y(player->y);
 
-    if (app.input[SDL_SCANCODE_UP])
+    if (app.input[SDL_SCANCODE_W])
         player->y -= PLAYER_SPEED;
-    if (app.input[SDL_SCANCODE_DOWN])
+    if (app.input[SDL_SCANCODE_S])
         player->y += PLAYER_SPEED;
-    if (app.input[SDL_SCANCODE_LEFT])
+    if (app.input[SDL_SCANCODE_A])
         player->x -= PLAYER_SPEED;
-    if (app.input[SDL_SCANCODE_RIGHT])
+    if (app.input[SDL_SCANCODE_D])
         player->x += PLAYER_SPEED;
 
     //Constrain within window
@@ -192,25 +171,71 @@ void doGameLogic(){
     player->x = std::min(WINDOW_WIDTH - PLAYER_SIZE, player->x);
     player->y = std::min(WINDOW_HEIGHT - PLAYER_SIZE, player->y);
     
-    if (prev_x != player->x || prev_y != player->y)
-        std::cout << "Player position: (" << player->x << "," << player->y << ")" << std::endl;
+    //if (prev_x != player->x || prev_y != player->y)
+        //std::cout << "Player position: (" << player->x << "," << player->y << ")" << std::endl;
 }
 
 void doDrawing(){
     //Background
-    SDL_SetRenderDrawColor(app.renderer, 255, 255, 255, 255);
+    SDL_SetRenderDrawColor(app.renderer, 255, 255, 255, 255); //White
     SDL_RenderClear(app.renderer);
 
-    SDL_SetRenderDrawColor(app.renderer, 255, 0, 0, 255);
-    SDL_Rect rect = {player->x, player->y, PLAYER_SIZE, PLAYER_SIZE};
-    SDL_RenderFillRect(app.renderer, &rect);
+    if (initialized){
+        SDL_SetRenderDrawColor(app.renderer, player->color.r, player->color.g, player->color.b, 255);
+        SDL_Rect rect = {player->x, player->y, PLAYER_SIZE, PLAYER_SIZE};
+        SDL_RenderFillRect(app.renderer, &rect);
+    }
     
     SDL_RenderPresent(app.renderer); //Render
 }
 
 void cleanup(){
+    if (peer != NULL)
+        enet_peer_disconnect_now(peer, 0); //Forcefully disconnect
     enet_deinitialize();
     SDL_DestroyRenderer(app.renderer);
     SDL_DestroyWindow(app.window);
     SDL_Quit();
+}
+
+void processPacket(ENetPacket* packet){
+    std::string data(reinterpret_cast<char const*>(packet->data));
+
+    int type = data[0] - '0'; //Get packet category
+    switch (type){
+        case 0:
+            //INITIALIZE
+            parseInitPacket(data);
+    }
+}
+
+void parseInitPacket(std::string& data){
+    std::string values[6]; //id, x, y, r, g, b
+
+    grabStrings(data, values);
+    
+    //Assign values
+    player->id = stoi(values[0]);
+    player->x = stoi(values[1]);
+    player->y = stoi(values[2]);
+    player->color.r = stoi(values[3]);
+    player->color.g = stoi(values[4]);
+    player->color.b = stoi(values[5]);
+
+    initialized = true;
+    std::cout << "Initialized: " << player->id << "-" << player->x << "-" << player->color.r << std::endl;
+}
+
+void grabStrings(std::string& str, std::string data[]){
+    //Store semicolon-separated strings in an array
+    int j = 0; //Element of array
+
+    for (int i=1; i < str.length(); i++){
+        if (str[i] == ';'){
+            ++j;
+            continue;
+        }
+
+        data[j] += str[i];
+    }
 }

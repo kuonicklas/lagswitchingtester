@@ -4,6 +4,8 @@
 #include <iostream>
 #include <enet/enet.h>
 #include "shared.h"
+#include <vector>
+#include <array>
 
 //----STRUCTS----
 typedef struct{
@@ -13,7 +15,7 @@ typedef struct{
 } App;
 
 App app; //Game window
-Player* player;
+std::vector<Player> playerList; //Playerdata of all players (first is self)
 
 //----FUNCTIONS----
 void init_SDL();
@@ -25,7 +27,8 @@ void doGameLogic();
 void doDrawing();
 void processPacket(ENetPacket*);
 void parseInitPacket(std::string&);
-void grabStrings(std::string&, std::string[]);
+void parseUpdatePacket(std::string&);
+void updateServer();
 
 //----Global Vars----
 ENetPeer* peer; //The server-client connection
@@ -76,14 +79,16 @@ int main(int argc, char* argv[]){
     }
 
     //GAME LOOP
-    player = new Player;
+    std::cout << "Awaiting player initialization from server..." << std::endl;
+    Player self = {};
+    playerList.push_back(self);
     
     while(true){
-        //Receive packet
+        //Receive packet(s)
         while(enet_host_service(client, &event, 0) > 0){ //Was 1000
             switch(event.type){
                 case ENET_EVENT_TYPE_RECEIVE:
-                    std::cout << "Received packet: [" << event.packet->data << "]" << std::endl;
+                    //std::cout << "Received packet: [" << event.packet->data << "]" << std::endl;
                     processPacket(event.packet);
                     break;
                 case ENET_EVENT_TYPE_DISCONNECT:
@@ -94,7 +99,9 @@ int main(int argc, char* argv[]){
 
         getInput(); //User Input
         doGameLogic(); //Player Movement
+        updateServer();
         doDrawing(); //Drawing
+        SDL_RenderPresent(app.renderer); //Render
         
         //Cap Frame Rate
         SDL_Delay(16);
@@ -154,25 +161,25 @@ void registerRelease(SDL_KeyboardEvent* event){
 
 void doGameLogic(){
     //Movement
-    //int prev_x(player->x), prev_y(player->y);
-
+    //int prev_x(player.x), prev_y(player.y);
+    
     if (app.input[SDL_SCANCODE_W])
-        player->y -= PLAYER_SPEED;
+        playerList[0].y -= PLAYER_SPEED;
     if (app.input[SDL_SCANCODE_S])
-        player->y += PLAYER_SPEED;
+        playerList[0].y += PLAYER_SPEED;
     if (app.input[SDL_SCANCODE_A])
-        player->x -= PLAYER_SPEED;
+        playerList[0].x -= PLAYER_SPEED;
     if (app.input[SDL_SCANCODE_D])
-        player->x += PLAYER_SPEED;
+        playerList[0].x += PLAYER_SPEED;
 
     //Constrain within window
-    player->x = std::max(0, player->x);
-    player->y = std::max(0, player->y);
-    player->x = std::min(WINDOW_WIDTH - PLAYER_SIZE, player->x);
-    player->y = std::min(WINDOW_HEIGHT - PLAYER_SIZE, player->y);
+    playerList[0].x = std::max(0, playerList[0].x);
+    playerList[0].y = std::max(0, playerList[0].y);
+    playerList[0].x = std::min(WINDOW_WIDTH - PLAYER_SIZE, playerList[0].x);
+    playerList[0].y = std::min(WINDOW_HEIGHT - PLAYER_SIZE, playerList[0].y);
     
-    //if (prev_x != player->x || prev_y != player->y)
-        //std::cout << "Player position: (" << player->x << "," << player->y << ")" << std::endl;
+    //if (prev_x != player.x || prev_y != player.y)
+        //std::cout << "Player position: (" << player.x << "," << player.y << ")" << std::endl;
 }
 
 void doDrawing(){
@@ -180,13 +187,15 @@ void doDrawing(){
     SDL_SetRenderDrawColor(app.renderer, 255, 255, 255, 255); //White
     SDL_RenderClear(app.renderer);
 
-    if (initialized){
-        SDL_SetRenderDrawColor(app.renderer, player->color.r, player->color.g, player->color.b, 255);
-        SDL_Rect rect = {player->x, player->y, PLAYER_SIZE, PLAYER_SIZE};
+    if (!initialized)
+        return;
+    
+    //Draw all players
+    for (auto& p : playerList){
+        SDL_SetRenderDrawColor(app.renderer, p.color.r, p.color.g, p.color.b, 255); //We don't actually receive the colors of other players!!
+        SDL_Rect rect = {p.x, p.y, PLAYER_SIZE, PLAYER_SIZE};
         SDL_RenderFillRect(app.renderer, &rect);
     }
-    
-    SDL_RenderPresent(app.renderer); //Render
 }
 
 void cleanup(){
@@ -206,6 +215,11 @@ void processPacket(ENetPacket* packet){
         case 0:
             //INITIALIZE
             parseInitPacket(data);
+            break;
+        case 1:
+            //UPDATE
+            parseUpdatePacket(data);
+            break;
     }
 }
 
@@ -215,27 +229,85 @@ void parseInitPacket(std::string& data){
     grabStrings(data, values);
     
     //Assign values
-    player->id = stoi(values[0]);
-    player->x = stoi(values[1]);
-    player->y = stoi(values[2]);
-    player->color.r = stoi(values[3]);
-    player->color.g = stoi(values[4]);
-    player->color.b = stoi(values[5]);
+    playerList[0].id = stoi(values[0]);
+    playerList[0].x = stoi(values[1]);
+    playerList[0].y = stoi(values[2]);
+    playerList[0].color.r = stoi(values[3]);
+    playerList[0].color.g = stoi(values[4]);
+    playerList[0].color.b = stoi(values[5]);
 
     initialized = true;
-    std::cout << "Initialized: " << player->id << "-" << player->x << "-" << player->color.r << std::endl;
 }
 
-void grabStrings(std::string& str, std::string data[]){
-    //Store semicolon-separated strings in an array
-    int j = 0; //Element of array
+void updateServer(){
+    std::string packetData;
 
-    for (int i=1; i < str.length(); i++){
-        if (str[i] == ';'){
-            ++j;
-            continue;
+    packetData += std::to_string(static_cast<int>(clientPacket::UPDATE)); //Packet category
+    packetData += std::to_string(playerList[0].id); //id
+    packetData += ';';
+    packetData += std::to_string(playerList[0].x); //x
+    packetData += ';';
+    packetData += std::to_string(playerList[0].y); //y
+
+    ENetPacket* packet = enet_packet_create(packetData.c_str(), packetData.length() + 1, 0);
+    enet_peer_send(peer, 0, packet);
+}
+
+void parseUpdatePacket(std::string& data){
+    std::vector<std::array<std::string, 3>> playerData;
+    //Parse string
+    for (int i=1; i < data.length(); i++){
+        std::array<std::string, 3> pData;
+
+        for (int j=0; j < 3 && i < data.length(); i++){
+            if (data[i] == ';'){
+                ++j;
+                continue;
+            }
+
+            pData[j] += data[i];
         }
 
-        data[j] += str[i];
+        playerData.push_back(pData);
+        --i;
     }
+
+    //Print parsed data
+    // for (auto& a : playerData){
+    //     std::cout << "[";
+    //     for (auto& s : a)
+    //         std::cout << s << ",";
+    //     std::cout << "]";
+    // }
+
+    //Update player data
+    int index;
+    for (std::array<std::string, 3>& p : playerData){
+        if (stoi(p[0]) == playerList[0].id)
+            continue;
+        
+        //Find player index in vector (DON'T NEED THIS IF WE HAVE A MAP)
+        index = -1;
+        for (int k = 1; k < playerList.size(); k++){
+            if (playerList[k].id == stoi(p[0])){
+                index = k;
+                break;
+            }
+        }
+        if (index == -1){
+            //Not found: Add to list
+            Player newPlayer;
+            newPlayer.id = stoi(p[0]);
+            playerList.push_back(newPlayer);
+            index = playerData.size();
+
+            std::cout << "Player [" << p[0] << "] connected." << std::endl;
+        }
+
+        playerList[index].x = stoi(p[1]);
+        playerList[index].y = stoi(p[2]);
+    }
+
+    // //Print player list
+    // std::cout << "PlayerCount: " << playerList.size() << std::endl;
 }

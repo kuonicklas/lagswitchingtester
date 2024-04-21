@@ -17,12 +17,6 @@ enum class serverPacket{INITIALIZE, UPDATE, DISCONNECT};
 enum class clientPacket{UPDATE};
 
 //----SHARED STRUCTS----
-typedef struct{
-    int id; //Player id
-    int x;
-    int y;
-    SDL_Color color;
-} Player;
 
 //----SHARED FUNCS----
 void grabStrings(std::string& str, std::string data[]){

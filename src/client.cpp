@@ -1,5 +1,4 @@
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
 #include <string.h>
 #include <iostream>
 #include <enet/enet.h>
@@ -7,8 +6,16 @@
 #include <vector>
 #include <array>
 #include <cmath>
+#include <map>
 
 //----STRUCTS----
+typedef struct{
+    int id; //Player id
+    int x;
+    int y;
+    SDL_Color color;
+} Player;
+
 typedef struct{
     SDL_Renderer* renderer;
     SDL_Window* window;
@@ -16,7 +23,7 @@ typedef struct{
 } App;
 
 App app; //Game window
-std::vector<Player> playerList; //Playerdata of all players (first is self)
+std::map<int, Player> playerList; //Playerdata of all players
 
 //----FUNCTIONS----
 void init_SDL();
@@ -30,6 +37,7 @@ void processPacket(ENetPacket*);
 void parseInitPacket(std::string&);
 void parseUpdatePacket(std::string&);
 void updateServer();
+int getPacketData(ENetPacket*, std::string&);
 void DrawCircle(SDL_Renderer*, int32_t, int32_t, int32_t); //NOT MY CODE; THIS IS A WINDOWS "IMPORT"
 
 unsigned int sendSample(unsigned int, void*);
@@ -40,13 +48,13 @@ bool initialized = false;
 bool dropPackets = false;
 bool drawCircle = false;
 bool badConnection = false;
+Player* self = nullptr;
 
 int critical_counter; //Accumulator for critical events
 
 //
 int main(int argc, char* argv[]){
     //Initialize
-    init_SDL();
 
     if (enet_initialize() != 0){
         std::cout << "Failed to initialize ENet." << std::endl;
@@ -55,7 +63,7 @@ int main(int argc, char* argv[]){
 
     atexit(cleanup); //Call this automatically when program closes
 
-    //Create a client
+    //CONNECT TO SERVER
     ENetHost* client;
     ENetAddress address; //Holds server IP and port
     ENetEvent event; //Holds events from server (i.e. data)
@@ -69,9 +77,8 @@ int main(int argc, char* argv[]){
     enet_address_set_host(&address, "127.0.0.1");
     address.port = 4450;
 
-    std::cout << "Connecting to server..." << std::endl;
-
     peer = enet_host_connect(client, &address, 1, 0);
+    std::cout << "Connecting to server..." << std::endl;
     if (peer == NULL){
         std::cout << "Failed to connect with the server." << std::endl;
     }
@@ -87,19 +94,32 @@ int main(int argc, char* argv[]){
         exit(0);
     }
 
-    //GAME LOOP
+    //Initialization loop
     std::cout << "Awaiting player initialization from server..." << std::endl;
-    Player self = {};
-    playerList.push_back(self);
+    while (!initialized){
+        while(enet_host_service(client, &event, 0) > 0){
+            if (event.type == ENET_EVENT_TYPE_RECEIVE){
+                //Wait for initialization packet specifically
+                std::string data;
+                int type = getPacketData(event.packet, data);
+                if (type != 0)
+                    continue;
+                parseInitPacket(data);
+            }
+        }
+    }
+
+    //Init SDL, open game window
+    init_SDL(); 
 
     SDL_TimerID sampleTimer = SDL_AddTimer(1000, sendSample, NULL); //Send critical moment sample
-    
+
+    //GAME LOOP
     while(true){
         //Receive packet(s)
-        while(enet_host_service(client, &event, 0) > 0){ //Was 1000
+        while(enet_host_service(client, &event, 0) > 0){
             switch(event.type){
                 case ENET_EVENT_TYPE_RECEIVE:
-                    //std::cout << "Received packet: [" << event.packet->data << "]" << std::endl;
                     processPacket(event.packet);
                     break;
                 case ENET_EVENT_TYPE_DISCONNECT:
@@ -185,16 +205,14 @@ void registerRelease(SDL_KeyboardEvent* event){
 
 void doGameLogic(){
     //Movement
-    //int prev_x(player.x), prev_y(player.y);
-    
     if (app.input[SDL_SCANCODE_W])
-        playerList[0].y -= PLAYER_SPEED;
+        self->y -= PLAYER_SPEED;
     if (app.input[SDL_SCANCODE_S])
-        playerList[0].y += PLAYER_SPEED;
+        self->y += PLAYER_SPEED;
     if (app.input[SDL_SCANCODE_A])
-        playerList[0].x -= PLAYER_SPEED;
+        self->x -= PLAYER_SPEED;
     if (app.input[SDL_SCANCODE_D])
-        playerList[0].x += PLAYER_SPEED;
+        self->x += PLAYER_SPEED;
 
     //Toggle dropPackets
     if (app.input[SDL_SCANCODE_SPACE]){
@@ -233,22 +251,20 @@ void doGameLogic(){
     }
 
     //Constrain within window
-    playerList[0].x = std::max(0, playerList[0].x);
-    playerList[0].y = std::max(0, playerList[0].y);
-    playerList[0].x = std::min(WINDOW_WIDTH - PLAYER_SIZE, playerList[0].x);
-    playerList[0].y = std::min(WINDOW_HEIGHT - PLAYER_SIZE, playerList[0].y);
-    
-    //if (prev_x != player.x || prev_y != player.y)
-        //std::cout << "Player position: (" << player.x << "," << player.y << ")" << std::endl;
+    self->x = std::max(0, self->x);
+    self->y = std::max(0, self->y);
+    self->x = std::min(WINDOW_WIDTH - PLAYER_SIZE, self->x);
+    self->y = std::min(WINDOW_HEIGHT - PLAYER_SIZE, self->y);
 
     //Check critical events
     double distance;
-    for (Player& p : playerList){
-        if (p.id == playerList[0].id)
+    for (auto& p : playerList){
+        if (p.second.id == self->id)
             continue;
 
-        double dx = playerList[0].x + (PLAYER_SIZE / 2) - p.x + (PLAYER_SIZE / 2);
-        double dy = playerList[0].y + (PLAYER_SIZE / 2) - p.y + (PLAYER_SIZE / 2);
+        //Get distance
+        double dx = self->x + (PLAYER_SIZE / 2) - p.second.x + (PLAYER_SIZE / 2);
+        double dy = self->y + (PLAYER_SIZE / 2) - p.second.y + (PLAYER_SIZE / 2);
         distance = std::hypot(dx, dy);
         if (distance < CRITICAL_ZONE_RADIUS){
             critical_counter++;
@@ -268,13 +284,13 @@ void doDrawing(){
     //Draw critical zone
     if (drawCircle){
         SDL_SetRenderDrawColor(app.renderer, 0, 0, 0, 255);
-        DrawCircle(app.renderer, playerList[0].x + (PLAYER_SIZE / 2), playerList[0].y + (PLAYER_SIZE / 2), CRITICAL_ZONE_RADIUS);
+        DrawCircle(app.renderer, self->x + (PLAYER_SIZE / 2), self->y + (PLAYER_SIZE / 2), CRITICAL_ZONE_RADIUS);
     }
     
     //Draw all players
     for (auto& p : playerList){
-        SDL_SetRenderDrawColor(app.renderer, p.color.r, p.color.g, p.color.b, 255); //We don't actually receive the colors of other players!!
-        SDL_Rect rect = {p.x, p.y, PLAYER_SIZE, PLAYER_SIZE};
+        SDL_SetRenderDrawColor(app.renderer, p.second.color.r, p.second.color.g, p.second.color.b, 255); //We don't actually receive the colors of other players!!
+        SDL_Rect rect = {p.second.x, p.second.y, PLAYER_SIZE, PLAYER_SIZE};
         SDL_RenderFillRect(app.renderer, &rect);
     }
 }
@@ -289,9 +305,9 @@ void cleanup(){
 }
 
 void processPacket(ENetPacket* packet){
-    std::string data(reinterpret_cast<char const*>(packet->data));
+    std::string data;
+    int type = getPacketData(packet, data);
 
-    int type = data[0] - '0'; //Get packet category
     switch (type){
         case 0:
             //INITIALIZE
@@ -305,40 +321,46 @@ void processPacket(ENetPacket* packet){
     }
 }
 
-void parseInitPacket(std::string& data){
-    std::string values[6]; //id, x, y, r, g, b
+void parseInitPacket(std::string& packetData){
+    std::string initData[6]; //id, x, y, r, g, b
 
-    grabStrings(data, values);
+    grabStrings(packetData, initData);
     
-    //Assign values
-    playerList[0].id = stoi(values[0]);
-    playerList[0].x = stoi(values[1]);
-    playerList[0].y = stoi(values[2]);
-    playerList[0].color.r = stoi(values[3]);
-    playerList[0].color.g = stoi(values[4]);
-    playerList[0].color.b = stoi(values[5]);
+    //Init self
+    //Also, initialize everybody else---------
+    Player newPlayer;
+    newPlayer.id = stoi(initData[0]);
+    newPlayer.x = stoi(initData[1]);
+    newPlayer.y = stoi(initData[2]);
+    newPlayer.color.r = stoi(initData[3]);
+    newPlayer.color.g = stoi(initData[4]);
+    newPlayer.color.b = stoi(initData[5]);
+
+    playerList[newPlayer.id] = newPlayer;
+    self = &playerList[newPlayer.id]; //"Self" points to its position in playerList
 
     initialized = true;
-    std::cout << "Initialized with ID[" << playerList[0].id << "] Pos[" << playerList[0].x << "," << playerList[0].y << "] Color[" << static_cast<int>(playerList[0].color.r) << "," << static_cast<int>(playerList[0].color.g) << "," << static_cast<int>(playerList[0].color.b) << "]" << std::endl; 
+    std::cout << "Initialized with ID[" << self->id << "] Pos[" << self->x << "," << self->y << "] Color[" << static_cast<int>(self->color.r) << "," << static_cast<int>(self->color.g) << "," << static_cast<int>(self->color.b) << "]" << std::endl; 
 }
 
 void updateServer(){
     std::string packetData;
 
     packetData += std::to_string(static_cast<int>(clientPacket::UPDATE)); //Packet category
-    packetData += std::to_string(playerList[0].id); //id
+    packetData += std::to_string(self->id); //id
     packetData += ';';
-    packetData += std::to_string(playerList[0].x); //x
+    packetData += std::to_string(self->x); //x
     packetData += ';';
-    packetData += std::to_string(playerList[0].y); //y
+    packetData += std::to_string(self->y); //y
 
     ENetPacket* packet = enet_packet_create(packetData.c_str(), packetData.length() + 1, 0);
     enet_peer_send(peer, 0, packet);
 }
 
 void parseUpdatePacket(std::string& data){
-    std::vector<std::array<std::string, 3>> playerData;
     //Parse string
+    std::vector<std::array<std::string, 3>> playerData;
+
     for (int i=1; i < data.length(); i++){
         std::array<std::string, 3> pData;
 
@@ -355,50 +377,38 @@ void parseUpdatePacket(std::string& data){
         --i;
     }
 
-    //Print parsed data
-    // for (auto& a : playerData){
-    //     std::cout << "[";
-    //     for (auto& s : a)
-    //         std::cout << s << ",";
-    //     std::cout << "]";
-    // }
-
     //Update player data
     int index;
     for (std::array<std::string, 3>& p : playerData){
-        if (stoi(p[0]) == playerList[0].id)
-            continue;
+        int id = stoi(p[0]);
+
+        if (id == self->id)
+            continue; //Skip own entry
         
-        //Find player index in vector (DON'T NEED THIS IF WE HAVE A MAP)
-        index = -1;
-        for (int k = 1; k < playerList.size(); k++){
-            if (playerList[k].id == stoi(p[0])){
-                index = k;
-                break;
-            }
-        }
-        if (index == -1){
-            //Not found: Add to list
-            Player newPlayer;
-            newPlayer.id = stoi(p[0]);
-            playerList.push_back(newPlayer);
-            index = playerData.size();
-
-            std::cout << "Player [" << p[0] << "] connected." << std::endl;
+        //Unknown ID -> Add new player
+        auto iter = playerList.find(self->id);
+        if (iter == playerList.end()){
+            Player newPlayer = {};
+            newPlayer.id = id;
+            playerList[id] = newPlayer;
+            std::cout << "Added player entry: [" << id << "]." << std::endl;
         }
 
-        playerList[index].x = stoi(p[1]);
-        playerList[index].y = stoi(p[2]);
+        //Update position
+        playerList[id].x = stoi(p[1]);
+        playerList[id].y = stoi(p[2]);
     }
-
-    // //Print player list
-    // std::cout << "PlayerCount: " << playerList.size() << std::endl;
 }
 
 unsigned int sendSample(unsigned int a, void* b){
     std::cout << "Counter: " << critical_counter << std::endl;
     critical_counter = 0;
     return 1000;
+}
+
+int getPacketData(ENetPacket* packet, std::string& container){
+    container = reinterpret_cast<char const*>(packet->data);
+    return container[0] - '0'; //Returns packet type
 }
 
 void DrawCircle(SDL_Renderer * renderer, int32_t centreX, int32_t centreY, int32_t radius)

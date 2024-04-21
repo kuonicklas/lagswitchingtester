@@ -1,0 +1,11 @@
+todo:
+-change server playerList vector to map
+-handle disconnects for server; store pointer to peer
+-add additional initialization data: player colors.
+
+-handle disconnects for client
+
+-When we initialize, we should also receive other playerdata too.
+-MAKE SURE SERVER DOES NOT SEND DATA ON UNINITIALIZED PLAYERS!
+
+-ahh configure debugging

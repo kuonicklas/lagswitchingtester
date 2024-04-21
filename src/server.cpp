@@ -7,6 +7,16 @@
 #include <SDL2/SDL.h>
 #include <map>
 
+//---STRUCTS---
+typedef struct{
+    int id; //Player id
+    int x;
+    int y;
+    SDL_Color color;
+    ENetPeer* peer;
+} Player;
+
+//---FUNCS---
 void cleanup();
 void printPlayerCount();
 void initializePlayer();

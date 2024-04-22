@@ -13,13 +13,14 @@ typedef struct{
     int x;
     int y;
     SDL_Color color;
-    ENetPeer* peer;
+    ENetAddress address;
 } Player;
 
 //---FUNCS---
 void cleanup();
 void printPlayerCount();
 void initializePlayer();
+void disconnectPlayer();
 void processPacket(ENetPacket*);
 void parseUpdatePacket(std::string&);
 unsigned int sendUpdatePackets(unsigned int, void*);
@@ -28,12 +29,12 @@ unsigned int analyzePackets(unsigned int, void*);
 //Packet switching detection
 std::map<int, int> packet_counter; //Accumulator for each player
 std::map<int,std::vector<int>> packetCount; //Vector of samples for each player
-std::map<int,std::vector<int>> criticalEvents; //Vector of samples for each player
-int getPValue();
+//std::map<int,std::vector<int>> criticalEvents; //Vector of samples for each player
+//int getPValue();
 
 ENetHost* server;
 ENetEvent event;
-std::vector<Player> playerList;
+std::map<int, Player> playerList;
 
 int main(int argc, char* argv[]){
     if (SDL_Init(SDL_INIT_TIMER) < 0){
@@ -46,6 +47,7 @@ int main(int argc, char* argv[]){
         std::cout << "Failed to initialize ENet." << std::endl;
         exit(1);
     }
+
     atexit(cleanup);
 
     //Create server
@@ -60,7 +62,7 @@ int main(int argc, char* argv[]){
         exit(1);
     }
     
-    std::cout << "Server created at port " << address.port << ". Ready to connect." << std::endl;
+    std::cout << "Server created at port " << server->address.port << ". Ready to connect." << std::endl; //NOTE: Get host ip with WINSOCK?-----
     printPlayerCount();
 
     //Game loop start
@@ -73,13 +75,11 @@ int main(int argc, char* argv[]){
         while(enet_host_service(server, &event, 0) > 0){
             switch(event.type){
                 case ENET_EVENT_TYPE_CONNECT:
-                    std::cout << "A client connected from " << event.peer->address.host << ":" << event.peer->address.port << "." << std::endl;
                     initializePlayer();
                     printPlayerCount();
                     break;
                 case ENET_EVENT_TYPE_DISCONNECT:
-                    std::cout << event.peer->address.host << ":" << event.peer->address.port << " disconnected." << std::endl;
-                    //Ideally, handle disconnects. Currently, the playerList just grows. So we track which peer has which id. Every update received, the client checks the list of ids. If one is not present, remove from their playerList.
+                    disconnectPlayer();
                     printPlayerCount();
                     break;
                 case ENET_EVENT_TYPE_RECEIVE:
@@ -87,15 +87,18 @@ int main(int argc, char* argv[]){
                     break;
             }
         }
-
-        //Send packets
-        //while() 
     }
 }
 
 void cleanup(){
-    if (server != NULL)
+    if (server != NULL){
+        //Inform all peers of disconnect -- This may be slightly faster than timeout?
+        for (int i=0; i < server->peerCount; i++){
+            enet_peer_disconnect_now(&server->peers[i],0);
+        }
         enet_host_destroy(server);
+    }
+        
     enet_deinitialize();
 }
 
@@ -127,15 +130,25 @@ void initializePlayer(){
     enet_peer_send(event.peer, 0, packet);
 
     //Add to player list
-    Player newPlayer = {id, x, y};
-    newPlayer.color.r = r;
-    newPlayer.color.g = g;
-    newPlayer.color.b = b;
+    SDL_Color newColor = {r,g,b};
+    ENetAddress newAddress = event.peer->address;
+    Player newPlayer = {id, x, y, newColor, newAddress};
 
-    playerList.push_back(newPlayer);
-    std::cout << "Initialized player [" << id << "]" << std::endl;
+    playerList[id] = newPlayer;
+    std::cout << "Initialized " << event.peer->address.host << ":" << event.peer->address.port << " as Player [" << id << "]" << std::endl;
 
     ++id;
+}
+
+void disconnectPlayer(){
+    //Find and remove
+    for (auto& p : playerList){
+        if (p.second.address.host != event.peer->address.host ||
+            p.second.address.port != event.peer->address.port)
+            continue;
+        playerList.erase(p.second.id);
+        std::cout << "Player [" << p.second.id << "] at " << event.peer->address.host << ":" << event.peer->address.port << " disconnected." << std::endl;
+    }
 }
 
 void processPacket(ENetPacket* packet){
@@ -156,14 +169,14 @@ void parseUpdatePacket(std::string& data){
     //Update player position
     int id = stoi(values[0]);
 
-    for (Player& p : playerList){
-        if (p.id != id) //Find vector element corresponding to player id (I should change vector to map instead)
+    for (auto& p : playerList){
+        if (p.second.id != id) //Find vector element corresponding to player id (I should change vector to map instead)
             continue;
         
-        p.x = stoi(values[1]);
-        p.y = stoi(values[2]);
+        p.second.x = stoi(values[1]);
+        p.second.y = stoi(values[2]);
 
-        packet_counter[p.id]++; //Increment packet count
+        packet_counter[p.second.id]++; //Increment packet count
         //std::cout << "Player " << id << ": [" << p.x << "," << p.y << "]" << std::endl;
     }
 }
@@ -176,12 +189,12 @@ unsigned int sendUpdatePackets(unsigned int a, void* b){
 
     packetData += std::to_string(static_cast<int>(serverPacket::UPDATE));
 
-    for (Player& p : playerList){
-        packetData += std::to_string(p.id);
+    for (auto& p : playerList){
+        packetData += std::to_string(p.second.id);
         packetData += ";";
-        packetData += std::to_string(p.x);
+        packetData += std::to_string(p.second.x);
         packetData += ";";
-        packetData += std::to_string(p.y);
+        packetData += std::to_string(p.second.y);
         packetData += ";";
     }
     packetData.pop_back(); //Remove last semicolon
@@ -189,11 +202,12 @@ unsigned int sendUpdatePackets(unsigned int a, void* b){
     //Send player positions to each player
     ENetPacket* packet = enet_packet_create(packetData.c_str(), packetData.length() + 1, 0);
 
-    for (int i=0; i < playerList.size(); i++){
-        enet_peer_send(&(server->peers[i]), 0, packet);
+    for (int i=0; i < server->peerCount; i++){
+        if (server->peers[i].address.host != 0)
+            enet_peer_send(&(server->peers[i]), 0, packet);
     }
 
-    return 16;
+    return 16; //ms
 }
 
 unsigned int analyzePackets(unsigned int a, void* b){
@@ -201,18 +215,18 @@ unsigned int analyzePackets(unsigned int a, void* b){
     threshold_counter++;
 
     //Get Sample
-    for (Player& p : playerList){
-        packetCount[p.id].push_back(packet_counter[p.id]);
-        std::cout << "Sample for Player [" << p.id << "]: " << packet_counter[p.id] << std::endl;
-        packet_counter[p.id] = 0;
+    for (auto& p : playerList){
+        packetCount[p.second.id].push_back(packet_counter[p.second.id]);
+        std::cout << "Sample for Player [" << p.second.id << "]: " << packet_counter[p.second.id] << std::endl;
+        packet_counter[p.second.id] = 0;
     }
 
     if (threshold_counter == THRESHOLD){
         //Perform analysis
 
         //Clear data
-        for (Player& p : playerList){
-            packetCount[p.id].clear();
+        for (auto& p : playerList){
+            packetCount[p.second.id].clear();
         }
     }
 

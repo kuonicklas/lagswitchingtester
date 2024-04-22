@@ -2,10 +2,15 @@ todo:
 -change server playerList vector to map
 -handle disconnects for server; store pointer to peer
 -add additional initialization data: player colors.
-
 -handle disconnects for client
+-make my own circle-drawing code
+-add auto disconnect after 5 seconds of packet loss?
 
--When we initialize, we should also receive other playerdata too.
--MAKE SURE SERVER DOES NOT SEND DATA ON UNINITIALIZED PLAYERS!
+-Maybe have a separate playerList packet that lists what players are online, sent by the server every couple seconds (which contains id and color values?). Checking what players are online each frame seems wasteful.
 
--ahh configure debugging
+-get host ip address with winsock? (for server print message when it starts)
+-transition away from string parsing packets
+
+-stuttery movement
+
+Packet switching algorithm, regression

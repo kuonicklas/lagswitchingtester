@@ -44,6 +44,7 @@ unsigned int sendSample(unsigned int, void*);
 
 //----Global Vars----
 ENetPeer* peer; //The server-client connection
+ENetEvent event; //Holds events from queue
 bool initialized = false;
 bool dropPackets = false;
 bool drawCircle = false;
@@ -66,7 +67,6 @@ int main(int argc, char* argv[]){
     //CONNECT TO SERVER
     ENetHost* client;
     ENetAddress address; //Holds server IP and port
-    ENetEvent event; //Holds events from server (i.e. data)
     
     client = enet_host_create(NULL, 1, 1, 0, 0);
     if (client == NULL){
@@ -297,7 +297,7 @@ void doDrawing(){
 
 void cleanup(){
     if (peer != NULL)
-        enet_peer_disconnect_now(peer, 0); //Forcefully disconnect
+        enet_peer_disconnect(peer, 0); //Forcefully disconnect
     enet_deinitialize();
     SDL_DestroyRenderer(app.renderer);
     SDL_DestroyWindow(app.window);
@@ -359,7 +359,7 @@ void updateServer(){
 
 void parseUpdatePacket(std::string& data){
     //Parse string
-    std::vector<std::array<std::string, 3>> playerData;
+    std::map<int,std::array<std::string, 3>> playerData;
 
     for (int i=1; i < data.length(); i++){
         std::array<std::string, 3> pData;
@@ -369,34 +369,42 @@ void parseUpdatePacket(std::string& data){
                 ++j;
                 continue;
             }
-
             pData[j] += data[i];
         }
-
-        playerData.push_back(pData);
+        playerData[stoi(pData[0])] = pData;
         --i;
     }
 
     //Update player data
-    int index;
-    for (std::array<std::string, 3>& p : playerData){
-        int id = stoi(p[0]);
+    std::map<int,Player> playerListCopy = playerList;
 
-        if (id == self->id)
-            continue; //Skip own entry
-        
-        //Unknown ID -> Add new player
-        auto iter = playerList.find(self->id);
+    for (auto& p : playerData){
+        //Add players
+        int id = stoi(p.second[0]);
+        auto iter = playerList.find(id);
         if (iter == playerList.end()){
-            Player newPlayer = {};
-            newPlayer.id = id;
+            Player newPlayer = {id, stoi(p.second[1]), stoi(p.second[2])};
             playerList[id] = newPlayer;
             std::cout << "Added player entry: [" << id << "]." << std::endl;
         }
+    }
 
-        //Update position
-        playerList[id].x = stoi(p[1]);
-        playerList[id].y = stoi(p[2]);
+    for (auto& p : playerListCopy){
+        //Remove players
+        auto iter = playerData.find(p.second.id);
+        if (iter == playerData.end()){
+            playerList.erase(p.second.id);
+            std::cout << "Player [" << p.second.id << "] disconnected." << std::endl;
+        }
+    }
+
+    for (auto& p : playerList){
+        if (p.second.id == self->id)
+            continue;
+
+        //Update values
+        playerList[p.second.id].x = stoi(playerData[p.second.id][1]); //2nd element = x
+        playerList[p.second.id].y = stoi(playerData[p.second.id][2]); //3nd element = y
     }
 }
 
